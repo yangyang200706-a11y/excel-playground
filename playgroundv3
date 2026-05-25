@@ -1,0 +1,107 @@
+function main(workbook: ExcelScript.Workbook) {
+    const sheet = workbook.getActiveWorksheet();
+    const ROW_COUNT = 10;  // Updated to 10 rows
+    const COL_COUNT = 26;  // Columns A through Z
+    const targetRange = sheet.getRange("A1:Z10");
+
+    // Force Excel to flush its calculation tree to prevent stale reads
+    workbook.getApplication().calculate(ExcelScript.CalculationType.full);
+
+    // Appearance palette
+    const LIVE_COLOR = "#2F3542"; // Dark Slate
+    const DEAD_COLOR = "#FFFFFF"; // Clean White
+
+    // 1. Read Current Board State (Value + Color Memory Failsafe)
+    const rawValues = targetRange.getValues();
+    let currentState: number[][] = [];
+
+    for (let r = 0; r < ROW_COUNT; r++) {
+        let row: number[] = [];
+        for (let c = 0; c < COL_COUNT; c++) {
+            let val = rawValues[r][c];
+            let isAlive = false;
+
+            // Determine if cell is active based on live values or leftover colors
+            if (Number(val) === 1) {
+                isAlive = true;
+            } else {
+                let cellColor = targetRange.getCell(r, c).getFormat().getFill().getColor();
+                if (cellColor && cellColor.toUpperCase() === LIVE_COLOR) {
+                    isAlive = true;
+                }
+            }
+            row.push(isAlive ? 1 : 0);
+        }
+        currentState.push(row);
+    }
+
+    // 2. Separate Data Array for the Next Generation Computation
+    let nextState: number[][] = Array.from({ length: ROW_COUNT }, () => Array(COL_COUNT).fill(0));
+
+    for (let r = 0; r < ROW_COUNT; r++) {
+        for (let c = 0; c < COL_COUNT; c++) {
+            let liveNeighbors = 0;
+
+            // Scan all 8 surrounding neighbor coordinates
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    if (i === 0 && j === 0) continue; // Skip evaluating yourself
+
+                    let neighborRow = r + i;
+                    let neighborCol = c + j;
+
+                    // Stay inside the strict A1:Z10 boundary limitations
+                    if (neighborRow >= 0 && neighborRow < ROW_COUNT && neighborCol >= 0 && neighborCol < COL_COUNT) {
+                        if (currentState[neighborRow][neighborCol] === 1) {
+                            liveNeighbors++;
+                        }
+                    }
+                }
+            }
+
+            // Implement Conway's Core Rules
+            let isCurrentlyAlive = currentState[r][c] === 1;
+            if (isCurrentlyAlive) {
+                // Underpopulation or Overpopulation causes death; 2 or 3 neighbors means survival
+                nextState[r][c] = (liveNeighbors === 2 || liveNeighbors === 3) ? 1 : 0;
+            } else {
+                // Reproduction: A dead cell with exactly 3 live neighbors blooms into life
+                nextState[r][c] = (liveNeighbors === 3) ? 1 : 0;
+            }
+        }
+    }
+
+    // 3. Commit new matrix numbers to the grid first
+    targetRange.setValues(nextState);
+
+    // 4. Grid Formatting Reset (Borders and alignments)
+    const format = targetRange.getFormat();
+    format.setHorizontalAlignment(ExcelScript.HorizontalAlignment.center);
+    format.setVerticalAlignment(ExcelScript.VerticalAlignment.center);
+
+    const borderEdges = [
+        ExcelScript.BorderIndex.edgeTop, ExcelScript.BorderIndex.edgeBottom,
+        ExcelScript.BorderIndex.edgeLeft, ExcelScript.BorderIndex.edgeRight,
+        ExcelScript.BorderIndex.insideHorizontal, ExcelScript.BorderIndex.insideVertical
+    ];
+    borderEdges.forEach(b => {
+        let border = format.getRangeBorder(b);
+        border.setStyle(ExcelScript.BorderLineStyle.continuous);
+        border.setWeight(ExcelScript.BorderWeight.thin);
+        border.setColor("#E0E0E0");
+    });
+
+    // 5. Update Color Layout strictly following the new generation array
+    for (let r = 0; r < ROW_COUNT; r++) {
+        for (let c = 0; c < COL_COUNT; c++) {
+            let cell = targetRange.getCell(r, c);
+            if (nextState[r][c] === 1) {
+                cell.getFormat().getFill().setColor(LIVE_COLOR);
+                cell.getFormat().getFont().setColor("#FFFFFF"); // High visibility text
+            } else {
+                cell.getFormat().getFill().setColor(DEAD_COLOR);
+                cell.getFormat().getFont().setColor("#E0E0E0"); // Fades out the zeros gently
+            }
+        }
+    }
+}
