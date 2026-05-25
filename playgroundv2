@@ -1,0 +1,189 @@
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+  const commandCell = sheet.getRange("B32"); 
+  const commandValue = commandCell.getValue();
+
+  if (commandValue === undefined || commandValue === null) return;
+
+  const command = commandValue.toString().toLowerCase().trim();
+  if (command === "") return;
+
+  const ROW_COUNT = 30;
+  const COL_COUNT = 26; // Columns A through Z
+  const targetRange = sheet.getRange("A1:Z30");
+
+  // Force a workbook calculation sync to try and clear Excel's stale cache
+  workbook.getApplication().calculate(ExcelScript.CalculationType.full);
+
+  function getColumnIndex(colStr: string): number {
+    let index = 0;
+    for (let i = 0; i < colStr.length; i++) {
+      index = index * 26 + (colStr.charCodeAt(i) - 96);
+    }
+    return index - 1;
+  }
+
+  // Failsafe converter: Translates your screen colors back into numbers
+  function getValueFromColor(hex: string): number {
+    hex = hex.toUpperCase();
+    if (hex === "#FF3B30") return 1; // Red
+    if (hex === "#FF9500") return 2; // Orange
+    if (hex === "#FFCC00") return 3; // Yellow
+    if (hex === "#4CD964") return 4; // Green
+    if (hex === "#007AFF") return 5; // Blue
+    if (hex === "#5856D6") return 6; // Indigo
+    if (hex === "#8E44AD") return 7; // Purple
+    return 0;
+  }
+
+  // 1. Read Current State (Main Array) with Color Memory Failsafe
+  const rawValues = targetRange.getValues();
+  let mainValues: number[][] = [];
+  
+  for (let r = 0; r < ROW_COUNT; r++) {
+    let row: number[] = [];
+    for (let c = 0; c < COL_COUNT; c++) {
+      let val = Number(rawValues[r][c]);
+
+      // THE FIX: If Excel claims the cell is 0 or empty, we bypass the cache 
+      // and read the physical color painted on the screen to restore the number.
+      if (isNaN(val) || val === 0) {
+        let cellColor = targetRange.getCell(r, c).getFormat().getFill().getColor();
+        val = getValueFromColor(cellColor);
+      }
+      row.push(val);
+    }
+    mainValues.push(row);
+  }
+
+  // 2. Create the Separate Additions Array (Delta Matrix)
+  let deltaValues: number[][] = Array.from({ length: ROW_COUNT }, () => Array(COL_COUNT).fill(0));
+  let validCommand = false;
+  let isClearCommand = false;
+
+  // 3. Populate the Separate Additions Array
+  if (command === "all") {
+    for (let r = 0; r < ROW_COUNT; r++) {
+      for (let c = 0; c < COL_COUNT; c++) {
+        deltaValues[r][c] = 1;
+      }
+    }
+    validCommand = true;
+  } 
+  
+  else if (command === "zero" || command === "clear") {
+    isClearCommand = true;
+    validCommand = true;
+  }
+  
+  else if (command === "random") {
+    const totalCells = ROW_COUNT * COL_COUNT;
+    const numCellsToUpdate = Math.floor(Math.random() * totalCells) + 1;
+    
+    let allIndices = Array.from({ length: totalCells }, (_, i) => i);
+
+    for (let i = 0; i < numCellsToUpdate; i++) {
+      let randIdx = i + Math.floor(Math.random() * (totalCells - i));
+      
+      let temp = allIndices[i];
+      allIndices[i] = allIndices[randIdx];
+      allIndices[randIdx] = temp;
+
+      let r = Math.floor(allIndices[i] / COL_COUNT);
+      let c = allIndices[i] % COL_COUNT;
+      
+      deltaValues[r][c] = 1; 
+    }
+    validCommand = true;
+  }
+  
+  else if (!isNaN(Number(command))) {
+    let rowIdx = Number(command) - 1;
+    if (rowIdx >= 0 && rowIdx < ROW_COUNT) {
+      for (let c = 0; c < COL_COUNT; c++) {
+        deltaValues[rowIdx][c] = 1;
+      }
+      validCommand = true;
+    }
+  } 
+  
+  else if (/^[a-z]{1,2}$/.test(command)) {
+    let colIdx = getColumnIndex(command);
+    if (colIdx >= 0 && colIdx < COL_COUNT) {
+      for (let r = 0; r < ROW_COUNT; r++) {
+        deltaValues[r][colIdx] = 1;
+      }
+      validCommand = true;
+    }
+  }
+
+  // 4. Update on top of the main array, THEN write to Excel
+  if (validCommand) {
+    for (let r = 0; r < ROW_COUNT; r++) {
+      for (let c = 0; c < COL_COUNT; c++) {
+        if (isClearCommand) {
+          mainValues[r][c] = 0;
+        } else {
+          // Stacking: Old Values + New Commands
+          mainValues[r][c] += deltaValues[r][c]; 
+        }
+      }
+    }
+
+    // Write the actual numbers back to the grid first
+    targetRange.setValues(mainValues);
+
+    // 5. Apply the final color grading
+    updateRangeFormatting(targetRange, mainValues);
+  }
+}
+
+/**
+ * Applies the colour grading and formatting strictly based on the final memory array.
+ */
+function updateRangeFormatting(range: ExcelScript.Range, finalValues: number[][]) {
+  const format = range.getFormat();
+  
+  format.setHorizontalAlignment(ExcelScript.HorizontalAlignment.center);
+  format.setVerticalAlignment(ExcelScript.VerticalAlignment.center);
+
+  const borderEdges = [
+    ExcelScript.BorderIndex.edgeTop,
+    ExcelScript.BorderIndex.edgeBottom,
+    ExcelScript.BorderIndex.edgeLeft,
+    ExcelScript.BorderIndex.edgeRight,
+    ExcelScript.BorderIndex.insideHorizontal,
+    ExcelScript.BorderIndex.insideVertical
+  ];
+
+  borderEdges.forEach(b => {
+    let border = format.getRangeBorder(b);
+    border.setStyle(ExcelScript.BorderLineStyle.continuous);
+    border.setWeight(ExcelScript.BorderWeight.thin);
+    border.setColor("#D4D4D4"); 
+  });
+
+  const rows = finalValues.length;
+  const cols = finalValues[0].length;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let val = finalValues[r][c];
+      let cell = range.getCell(r, c);
+      
+      let bgHex = "#FFFFFF";
+      let fontHex = "#000000";
+
+      if (val === 1) { bgHex = "#FF3B30"; fontHex = "#FFFFFF"; }      // Red
+      else if (val === 2) { bgHex = "#FF9500"; fontHex = "#000000"; } // Orange
+      else if (val === 3) { bgHex = "#FFCC00"; fontHex = "#000000"; } // Yellow
+      else if (val === 4) { bgHex = "#4CD964"; fontHex = "#000000"; } // Green
+      else if (val === 5) { bgHex = "#007AFF"; fontHex = "#FFFFFF"; } // Blue
+      else if (val === 6) { bgHex = "#5856D6"; fontHex = "#FFFFFF"; } // Indigo
+      else if (val >= 7) { bgHex = "#8E44AD"; fontHex = "#FFFFFF"; }  // Purple
+
+      cell.getFormat().getFill().setColor(bgHex);
+      cell.getFormat().getFont().setColor(fontHex);
+    }
+  }
+}
