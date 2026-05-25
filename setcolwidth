@@ -1,0 +1,19 @@
+function main(workbook: ExcelScript.Workbook) {
+    const sheet = workbook.getActiveWorksheet();
+
+    // 1. Get the specified width value from cell I32
+    const widthCell = sheet.getRange("I12");
+    const widthValue = Number(widthCell.getValue());
+
+    // 2. Validate that the cell has a valid number greater than 0
+    if (isNaN(widthValue) || widthValue <= 0) {
+        console.log("Please enter a valid column width greater than 0 in cell I32.");
+        return;
+    }
+
+    // 3. Target columns A through Z and apply the width
+    const targetColumns = sheet.getRange("A:Z"); // Target columns A-Z
+    targetColumns.getFormat().setColumnWidth(widthValue);
+
+    console.log(`Successfully adjusted columns A-Z to a width of ${widthValue}.`);
+}
