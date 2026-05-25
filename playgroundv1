@@ -1,0 +1,131 @@
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+  const commandCell = sheet.getRange("B13");
+  const commandValue = commandCell.getValue();
+
+  if (commandValue === undefined || commandValue === null) return;
+
+  const command = commandValue.toString().toLowerCase().trim();
+  if (command === "") return;
+
+  const targetRange = sheet.getRange("A1:J10");
+
+  // 1. Safely read existing values to prevent board resets
+  const rawValues = targetRange.getValues();
+  let values: number[][] = [];
+
+  for (let r = 0; r < 10; r++) {
+    let row: number[] = [];
+    for (let c = 0; c < 10; c++) {
+      let cellValue = rawValues[r][c];
+      let num = 0;
+      // Strictly enforce number parsing so previous 1s become 2s, 3s, etc.
+      if (typeof cellValue === "number") {
+        num = cellValue;
+      } else if (typeof cellValue === "string" && cellValue.trim() !== "") {
+        num = Number(cellValue);
+        if (isNaN(num)) num = 0;
+      }
+      row.push(num);
+    }
+    values.push(row);
+  }
+
+  let validCommand = false;
+
+  // 2. Process Commands
+  if (command === "all") {
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        values[r][c]++;
+      }
+    }
+    validCommand = true;
+  }
+  else if (command === "zero" || command === "clear") {
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        values[r][c] = 0;
+      }
+    }
+    validCommand = true;
+  }
+  else if (!isNaN(Number(command))) {
+    let rowIdx = Number(command) - 1;
+    if (rowIdx >= 0 && rowIdx < 10) {
+      for (let c = 0; c < 10; c++) {
+        values[rowIdx][c]++;
+      }
+      validCommand = true;
+    }
+  }
+  else if (command.length === 1 && command >= 'a' && command <= 'j') {
+    let colIdx = command.charCodeAt(0) - 97;
+    for (let r = 0; r < 10; r++) {
+      values[r][colIdx]++;
+    }
+    validCommand = true;
+  }
+
+  // 3. Update the grid, colors, and formatting ONLY if the command was valid
+  if (validCommand) {
+    // Write the updated numbers back to the entire grid
+    targetRange.setValues(values);
+
+    // Apply Alignment
+    const format = targetRange.getFormat();
+    format.setHorizontalAlignment(ExcelScript.HorizontalAlignment.center);
+    format.setVerticalAlignment(ExcelScript.VerticalAlignment.center);
+
+    // Apply Default Gray Borders
+    const borderEdges = [
+      ExcelScript.BorderIndex.edgeTop,
+      ExcelScript.BorderIndex.edgeBottom,
+      ExcelScript.BorderIndex.edgeLeft,
+      ExcelScript.BorderIndex.edgeRight,
+      ExcelScript.BorderIndex.insideHorizontal,
+      ExcelScript.BorderIndex.insideVertical
+    ];
+
+    borderEdges.forEach(b => {
+      let border = format.getRangeBorder(b);
+      border.setStyle(ExcelScript.BorderLineStyle.continuous);
+      border.setWeight(ExcelScript.BorderWeight.thin);
+      border.setColor("#D4D4D4"); // Standard Excel gray gridline hex
+    });
+
+    // Apply Colors based on a max scale of 10
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        let val = values[r][c];
+        let cell = targetRange.getCell(r, c);
+
+        if (val <= 0) {
+          cell.getFormat().getFill().setColor("#FFFFFF");
+          cell.getFormat().getFont().setColor("#000000"); // Ensure text is visible
+        } else {
+          // Cap the gradient value at 10
+          let scaleValue = Math.min(val, 10);
+
+          // Map 0 -> 255 (white), 10 -> 0 (deep blue)
+          let intensity = Math.floor(255 * (1 - (scaleValue / 10)));
+          let hexPart = intensity.toString(16).padStart(2, '0');
+
+          // Color is built as #RRGGBB. Red and Green fade out, Blue stays at maximum.
+          let colorCode = `#${hexPart}${hexPart}FF`;
+          cell.getFormat().getFill().setColor(colorCode);
+
+          // If the blue background gets too dark (value 6 or higher), switch text to white
+          if (scaleValue >= 6) {
+            cell.getFormat().getFont().setColor("#FFFFFF");
+          } else {
+            cell.getFormat().getFont().setColor("#000000");
+          }
+        }
+      }
+    }
+
+    // Clear the command cell to get ready for the next input
+    // commandCell.clear(ExcelScript.ClearApplyTo.contents);
+  }
+}
